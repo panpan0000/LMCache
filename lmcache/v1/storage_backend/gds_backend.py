@@ -365,19 +365,26 @@ class GdsBackend(AllocatorBackendInterface):
             res = key in self.hot_cache
         if res:
             return True
-        if self._try_to_read_metadata(key):
+        if self._metadata_file_exists(key):
             return True
         return False
 
-    def _try_to_read_metadata(self, key: CacheEngineKey) -> Optional[DiskCacheMetadata]:
+    def _get_metadata_path_and_subdir(self, key: CacheEngineKey) -> Tuple[str, str]:
         path, subdir_key, _, _ = self._key_to_path(key)
-        path += _METADATA_FILE_SUFFIX
-        if os.path.exists(path):
+        return path + _METADATA_FILE_SUFFIX, subdir_key
+
+    def _try_to_read_metadata(self, key: CacheEngineKey) -> Optional[DiskCacheMetadata]:
+        meta_path, subdir_key = self._get_metadata_path_and_subdir(key)
+        if os.path.exists(meta_path):
             try:
-                return self._read_metadata(key, path, subdir_key)
+                return self._read_metadata(key, meta_path, subdir_key)
             except UnsupportedMetadataVersion:
-                logger.error(f"Unsupported metadata version for {path}, ignoring")
+                logger.error(f"Unsupported metadata version for {meta_path}, ignoring")
         return None
+
+    def _metadata_file_exists(self, key: CacheEngineKey) -> bool:
+        meta_path, _ = self._get_metadata_path_and_subdir(key)
+        return os.path.exists(meta_path)
 
     def _key_to_path(
         self,
@@ -524,7 +531,10 @@ class GdsBackend(AllocatorBackendInterface):
         with self.hot_lock:
             entry = self.hot_cache.get(key)
         if entry is None:
-            return None
+            metadata = self._try_to_read_metadata(key)  # validate metadata
+            if metadata is None:
+                return None
+            entry = metadata
 
         path = entry.path
         dtype = entry.dtype
